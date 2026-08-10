@@ -1,0 +1,9 @@
+[package]
+name    = "player"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+glam    = { workspace = true }
+world   = { path = "../world" }
+physics = { path = "../physics" }

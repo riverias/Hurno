@@ -1,0 +1,24 @@
+[package]
+name    = "app"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "app"
+path = "src/main.rs"
+
+[dependencies]
+glam    = { workspace = true }
+wgpu    = { workspace = true }
+winit   = { workspace = true }
+anyhow  = { workspace = true }
+pollster = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+core    = { path = "../core" }
+world   = { path = "../world" }
+render  = { path = "../render" }
+physics = { path = "../physics" }
+player  = { path = "../player" }
+gui     = { path = "../gui" }
+io      = { path = "../io" }

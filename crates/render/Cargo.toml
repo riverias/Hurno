@@ -1,0 +1,15 @@
+[package]
+name    = "render"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+glam     = { workspace = true }
+wgpu     = { workspace = true }
+winit    = { workspace = true }
+bytemuck = { workspace = true }
+image    = { workspace = true }
+world    = { path = "../world" }
+player   = { path = "../player" }
+anyhow   = { workspace = true }
+pollster = { workspace = true }

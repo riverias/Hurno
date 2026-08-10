@@ -1,0 +1,27 @@
+[workspace]
+members = [
+    "crates/core",
+    "crates/world",
+    "crates/render",
+    "crates/physics",
+    "crates/player",
+    "crates/gui",
+    "crates/io",
+    "crates/app",
+]
+resolver = "2"
+
+[workspace.dependencies]
+glam      = "0.27"
+wgpu      = { version = "22", features = ["webgl"] }
+winit     = "0.30"
+bytemuck  = { version = "1", features = ["derive"] }
+image     = { version = "0.25", default-features = false, features = ["png"] }
+serde     = { version = "1", features = ["derive"] }
+toml      = "0.8"
+tracing   = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+pollster  = "0.3"
+noise     = "0.9"
+anyhow    = "1"
+fastrand  = "2"

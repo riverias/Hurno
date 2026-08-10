@@ -1,0 +1,7 @@
+/target
+worlds/
+assets/textures/terrain.png
+assets/textures/items.png
+assets/textures/gui/icons.png
+assets/textures/gui/inventory.png
+*.pdb
