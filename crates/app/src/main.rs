@@ -1,3 +1,12 @@
+// ─── Hurno – Minecraft in Rust ───────────────────────────────────────────────
+// Debug console: every second the terminal prints a status line with
+//   FPS | XYZ position | yaw/pitch | loaded chunks | targeted block
+// Controls: WASD = move  Space = jump  Shift = sprint
+//           Left-click = lock mouse / break block
+//           Right-click = place block   Scroll = hotbar
+//           Esc = release mouse
+// ─────────────────────────────────────────────────────────────────────────────
+
 use winit::{
     application::ApplicationHandler,
     event::{
@@ -11,13 +20,70 @@ use winit::{
 };
 use glam::Vec3;
 use anyhow::Result;
-use tracing::info;
+use std::time::{Duration, Instant};
 
 use core::{Config, Timer};
 use world::World;
 use render::{Renderer, Camera};
 use player::{Player, Input};
 
+// ── Debug state ──────────────────────────────────────────────────────────────
+struct DebugInfo {
+    frame_count:    u64,
+    last_print:     Instant,
+    fps:            f32,
+}
+
+impl DebugInfo {
+    fn new() -> Self {
+        Self { frame_count: 0, last_print: Instant::now(), fps: 0.0 }
+    }
+
+    /// Call once per frame. Returns true when a new debug line was printed.
+    fn tick(&mut self, player: &Player, world: &World) -> bool {
+        self.frame_count += 1;
+        let elapsed = self.last_print.elapsed();
+        if elapsed >= Duration::from_secs(1) {
+            self.fps       = self.frame_count as f32 / elapsed.as_secs_f32();
+            self.frame_count = 0;
+            self.last_print  = Instant::now();
+
+            let pos        = player.pos;
+            let yaw_deg    = player.yaw.to_degrees();
+            let pitch_deg  = player.pitch.to_degrees();
+            let chunks     = world.chunks.len();
+            let hit_str    = match &player.hit {
+                Some(h) => format!("[{},{},{}] {:?}", h.pos.x, h.pos.y, h.pos.z, h.block),
+                None    => "none".to_string(),
+            };
+            let on_gnd     = if player.on_ground { "GND" } else { "AIR" };
+            let vel        = player.velocity;
+
+            // ── print to stderr so it's always visible even with log filters ──
+            eprintln!(
+                "\x1b[36m[HURNO DBG]\x1b[0m \
+                 FPS={fps:5.1} | \
+                 XYZ=({x:7.2},{y:6.2},{z:7.2}) | \
+                 vel=({vx:5.2},{vy:5.2},{vz:5.2}) | {gnd} | \
+                 yaw={yaw:6.1}° pitch={pit:5.1}° | \
+                 chunks={chunks:4} | \
+                 hit={hit}",
+                fps    = self.fps,
+                x      = pos.x,  y = pos.y,  z = pos.z,
+                vx     = vel.x,  vy = vel.y, vz = vel.z,
+                gnd    = on_gnd,
+                yaw    = yaw_deg,
+                pit    = pitch_deg,
+                chunks = chunks,
+                hit    = hit_str,
+            );
+            return true;
+        }
+        false
+    }
+}
+
+// ── Game struct ───────────────────────────────────────────────────────────────
 struct Game {
     window:       Option<std::sync::Arc<Window>>,
     renderer:     Option<Renderer>,
@@ -28,6 +94,7 @@ struct Game {
     input:        Input,
     cfg:          Config,
     mouse_locked: bool,
+    dbg:          DebugInfo,
 }
 
 impl Game {
@@ -42,10 +109,10 @@ impl Game {
             input: Input::default(),
             cfg,
             mouse_locked: false,
+            dbg: DebugInfo::new(),
         }
     }
 
-    /// Try Locked (true FPS — cursor stays hidden & centred), fall back to Confined.
     fn grab_cursor(window: &Window) {
         if window.set_cursor_grab(CursorGrabMode::Locked).is_err() {
             let _ = window.set_cursor_grab(CursorGrabMode::Confined);
@@ -59,20 +126,37 @@ impl Game {
     }
 }
 
+// ── winit ApplicationHandler ──────────────────────────────────────────────────
 impl ApplicationHandler for Game {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let attrs = Window::default_attributes()
-            .with_title("Hurno — Minecraft in Rust")
+            .with_title("Hurno \u2014 Minecraft in Rust")
             .with_inner_size(winit::dpi::PhysicalSize::new(
                 self.cfg.window_width, self.cfg.window_height));
         let win = std::sync::Arc::new(event_loop.create_window(attrs).unwrap());
-        // SAFETY: window lives for the entire process lifetime inside self.window
         let win_ref: &'static Window = unsafe { &*(std::sync::Arc::as_ptr(&win)) };
         let renderer = pollster::block_on(Renderer::new(win_ref)).unwrap();
         self.renderer = Some(renderer);
         self.window   = Some(win);
         self.world.load_around(0, 0);
-        info!("Game ready — left-click to lock mouse, Esc to release");
+
+        // ── startup banner ────────────────────────────────────────────────
+        eprintln!();
+        eprintln!("\x1b[32m╔══════════════════════════════════════════════╗\x1b[0m");
+        eprintln!("\x1b[32m║       HURNO — Minecraft Classic in Rust      ║\x1b[0m");
+        eprintln!("\x1b[32m╠══════════════════════════════════════════════╣\x1b[0m");
+        eprintln!("\x1b[32m║\x1b[0m  WASD = move     Space = jump  Shift = sprint  \x1b[32m║\x1b[0m");
+        eprintln!("\x1b[32m║\x1b[0m  LMB  = lock mouse / break block               \x1b[32m║\x1b[0m");
+        eprintln!("\x1b[32m║\x1b[0m  RMB  = place block   Scroll = hotbar          \x1b[32m║\x1b[0m");
+        eprintln!("\x1b[32m║\x1b[0m  Esc  = release mouse                          \x1b[32m║\x1b[0m");
+        eprintln!("\x1b[32m╠══════════════════════════════════════════════╣\x1b[0m");
+        eprintln!("\x1b[32m║\x1b[0m  [HURNO DBG] line prints every second          \x1b[32m║\x1b[0m");
+        eprintln!("\x1b[32m╚══════════════════════════════════════════════╝\x1b[0m");
+        eprintln!();
+        eprintln!("  Seed       : {}", self.cfg.seed);
+        eprintln!("  Render dist: {} chunks", self.cfg.render_distance);
+        eprintln!("  Chunks loaded at start: {}", self.world.chunks.len());
+        eprintln!();
     }
 
     fn window_event(
@@ -82,13 +166,12 @@ impl ApplicationHandler for Game {
         event: WindowEvent,
     ) {
         match event {
-            // ── lifecycle ─────────────────────────────────────────────────────
             WindowEvent::CloseRequested => event_loop.exit(),
 
-            // Release grab when alt-tabbing away
             WindowEvent::Focused(false) => {
                 self.mouse_locked = false;
                 if let Some(w) = &self.window { Self::release_cursor(w); }
+                eprintln!("[HURNO] window lost focus \u2014 mouse released");
             }
 
             WindowEvent::Resized(size) => {
@@ -96,9 +179,9 @@ impl ApplicationHandler for Game {
                     r.resize(size.width, size.height);
                     self.camera.resize(size.width, size.height);
                 }
+                eprintln!("[HURNO] resized to {}x{}", size.width, size.height);
             }
 
-            // ── keyboard ──────────────────────────────────────────────────────
             WindowEvent::KeyboardInput {
                 event: KeyEvent { physical_key, state, .. }, ..
             } => {
@@ -114,20 +197,41 @@ impl ApplicationHandler for Game {
                         KeyCode::Escape if pressed => {
                             self.mouse_locked = false;
                             if let Some(w) = &self.window { Self::release_cursor(w); }
+                            eprintln!("[HURNO] Esc \u2014 mouse unlocked");
+                        }
+                        // F3 \u2014 print instant debug snapshot
+                        KeyCode::F3 if pressed => {
+                            let pos   = self.player.pos;
+                            let chunk = (pos.x as i32 >> 4, pos.z as i32 >> 4);
+                            eprintln!();
+                            eprintln!("\x1b[33m[F3 SNAPSHOT]\x1b[0m");
+                            eprintln!("  Position  : ({:.2}, {:.2}, {:.2})", pos.x, pos.y, pos.z);
+                            eprintln!("  Chunk XZ  : {:?}", chunk);
+                            eprintln!("  Yaw/Pitch : {:.1}\u00b0 / {:.1}\u00b0",
+                                      self.player.yaw.to_degrees(),
+                                      self.player.pitch.to_degrees());
+                            eprintln!("  Velocity  : ({:.2}, {:.2}, {:.2})",
+                                      self.player.velocity.x,
+                                      self.player.velocity.y,
+                                      self.player.velocity.z);
+                            eprintln!("  On ground : {}", self.player.on_ground);
+                            eprintln!("  Chunks    : {}", self.world.chunks.len());
+                            eprintln!("  Block hit : {:?}", self.player.hit);
+                            eprintln!("  Hotbar sel: {}", self.player.inventory.selected);
+                            eprintln!();
                         }
                         _ => {}
                     }
                 }
             }
 
-            // ── mouse buttons ─────────────────────────────────────────────────
             WindowEvent::MouseInput { state: ElementState::Pressed, button, .. } => {
                 match button {
                     MouseButton::Left => {
                         if !self.mouse_locked {
-                            // First click: grab mouse for FPS look
                             self.mouse_locked = true;
                             if let Some(w) = &self.window { Self::grab_cursor(w); }
+                            eprintln!("[HURNO] mouse locked \u2014 Esc to release");
                         } else {
                             self.input.break_block = true;
                         }
@@ -144,7 +248,6 @@ impl ApplicationHandler for Game {
                 }
             }
 
-            // ── scroll (hotbar) ───────────────────────────────────────────────
             WindowEvent::MouseWheel { delta, .. } => {
                 self.input.scroll = match delta {
                     MouseScrollDelta::LineDelta(_, y) => -y as i32,
@@ -152,30 +255,29 @@ impl ApplicationHandler for Game {
                 };
             }
 
-            // ── frame ─────────────────────────────────────────────────────────
             WindowEvent::RedrawRequested => {
                 self.timer.tick();
                 let dt = self.timer.dt;
 
-                // Update player (mouse_dx/dy → yaw/pitch inside player.update)
                 self.player.update(&mut self.world, &self.input, dt);
-
-                // view-projection (available for pipeline uniform later)
                 let _vp = self.camera.view_proj(self.player.view_matrix());
 
-                // Reset per-frame transient inputs
+                // Per-frame transient reset
                 self.input.mouse_dx    = 0.0;
                 self.input.mouse_dy    = 0.0;
                 self.input.scroll      = 0;
                 self.input.break_block = false;
                 self.input.place_block = false;
 
-                // Dynamic chunk loading
+                // Chunk management
                 let pos = self.player.pos;
                 let cx  = (pos.x as i32) >> 4;
                 let cz  = (pos.z as i32) >> 4;
                 self.world.load_around(cx, cz);
                 self.world.unload_far(cx, cz);
+
+                // Debug console output (every 1 s)
+                self.dbg.tick(&self.player, &self.world);
 
                 // GPU render
                 if let Some(r) = &self.renderer {
@@ -183,14 +285,13 @@ impl ApplicationHandler for Game {
                         let mut enc = r.device.create_command_encoder(
                             &wgpu::CommandEncoderDescriptor { label: Some("frame") });
                         {
-                            // Sky-blue clear; chunk draw calls go inside once pipeline is wired
                             let _rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                                 label: Some("main-pass"),
                                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                                     view: &view,
                                     resolve_target: None,
                                     ops: wgpu::Operations {
-                                        load:  wgpu::LoadOp::Clear(wgpu::Color {
+                                        load: wgpu::LoadOp::Clear(wgpu::Color {
                                             r: 0.53, g: 0.81, b: 0.98, a: 1.0,
                                         }),
                                         store: wgpu::StoreOp::Store,
@@ -208,6 +309,7 @@ impl ApplicationHandler for Game {
                                 ),
                                 ..Default::default()
                             });
+                            // TODO: bind chunk pipeline & draw mesh VBOs here
                         }
                         r.queue.submit(std::iter::once(enc.finish()));
                         output.present();
@@ -221,7 +323,6 @@ impl ApplicationHandler for Game {
         }
     }
 
-    /// Raw device events — used for FPS mouse look (works even with Confined mode).
     fn device_event(
         &mut self,
         _: &ActiveEventLoop,
@@ -240,9 +341,10 @@ impl ApplicationHandler for Game {
     }
 }
 
+// ── main ─────────────────────────────────────────────────────────────────────
 fn main() -> Result<()> {
-    // Suppress the wgpu_core "waiting for submission" INFO spam.
-    // Override with RUST_LOG=debug to see everything.
+    // Suppress wgpu_core noise; keep our own app=info logs.
+    // Set RUST_LOG=debug in env to see everything.
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
