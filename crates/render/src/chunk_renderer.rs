@@ -10,7 +10,7 @@ use wgpu::*;
 use crate::mesh::{ChunkVertex, build_chunk_mesh};
 use world::World;
 
-// ---- WGSL shader (inlined so no path issues) --------------------------------
+// ---- WGSL shader (inlined) --------------------------------------------------
 const CHUNK_WGSL: &str = r#"
 struct Camera {
     view_proj:  mat4x4<f32>,
@@ -87,9 +87,9 @@ impl ChunkRenderer {
 
         // Camera UBO
         let cam_buf = device.create_buffer(&BufferDescriptor {
-            label:             Some("cam-ubo"),
-            size:              std::mem::size_of::<CameraUniform>() as u64,
-            usage:             BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            label:              Some("cam-ubo"),
+            size:               std::mem::size_of::<CameraUniform>() as u64,
+            usage:              BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let cam_bgl = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
@@ -136,9 +136,9 @@ impl ChunkRenderer {
         );
         let atlas_view = atlas_tex.create_view(&TextureViewDescriptor::default());
         let atlas_samp = device.create_sampler(&SamplerDescriptor {
-            label:       Some("atlas-samp"),
-            mag_filter:  FilterMode::Nearest,
-            min_filter:  FilterMode::Nearest,
+            label:         Some("atlas-samp"),
+            mag_filter:    FilterMode::Nearest,
+            min_filter:    FilterMode::Nearest,
             mipmap_filter: FilterMode::Nearest,
             ..Default::default()
         });
@@ -172,7 +172,8 @@ impl ChunkRenderer {
             ],
         });
 
-        // ChunkVertex layout: pos[f32;3] @ 0, uv[f32;2] @ 12, normal[f32;3] @ 20, ao[f32] @ 32
+        // ChunkVertex layout: pos[f32;3]@0, uv[f32;2]@12, normal[f32;3]@20, ao[f32]@32
+        // NOTE: single f32 is VertexFormat::Float32 (not Float32x1)
         let vbl = VertexBufferLayout {
             array_stride: std::mem::size_of::<ChunkVertex>() as u64,
             step_mode:    VertexStepMode::Vertex,
@@ -180,7 +181,7 @@ impl ChunkRenderer {
                 VertexAttribute { format: VertexFormat::Float32x3, offset:  0, shader_location: 0 },
                 VertexAttribute { format: VertexFormat::Float32x2, offset: 12, shader_location: 1 },
                 VertexAttribute { format: VertexFormat::Float32x3, offset: 20, shader_location: 2 },
-                VertexAttribute { format: VertexFormat::Float32x1, offset: 32, shader_location: 3 },
+                VertexAttribute { format: VertexFormat::Float32,   offset: 32, shader_location: 3 },
             ],
         };
 
@@ -190,18 +191,19 @@ impl ChunkRenderer {
             push_constant_ranges: &[],
         });
 
+        // NOTE: in wgpu 22 entry_point is &str (not Option<&str>)
         let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
             label:  Some("chunk-pipeline"),
             layout: Some(&pl),
             vertex: VertexState {
                 module:              &shader,
-                entry_point:         Some("vs_main"),
+                entry_point:         "vs_main",
                 buffers:             &[vbl],
                 compilation_options: Default::default(),
             },
             fragment: Some(FragmentState {
                 module:              &shader,
-                entry_point:         Some("fs_main"),
+                entry_point:         "fs_main",
                 targets:             &[Some(ColorTargetState {
                     format:     surface_fmt,
                     blend:      Some(BlendState::ALPHA_BLENDING),
@@ -215,11 +217,11 @@ impl ChunkRenderer {
                 ..Default::default()
             },
             depth_stencil: Some(DepthStencilState {
-                format:               TextureFormat::Depth32Float,
-                depth_write_enabled:  true,
-                depth_compare:        CompareFunction::Less,
-                stencil:              Default::default(),
-                bias:                 Default::default(),
+                format:              TextureFormat::Depth32Float,
+                depth_write_enabled: true,
+                depth_compare:       CompareFunction::Less,
+                stencil:             Default::default(),
+                bias:                Default::default(),
             }),
             multisample: MultisampleState::default(),
             multiview:   None,
@@ -239,7 +241,7 @@ impl ChunkRenderer {
         queue.write_buffer(&self.cam_buf, 0, cast_slice(&[u]));
     }
 
-    /// Build and upload a chunk mesh.  Call after dirty flag is set.
+    /// Build and upload a chunk mesh. Call after dirty flag is set.
     pub fn upload_chunk(&mut self, device: &Device, key: IVec2, world: &World) {
         let chunk = match world.chunks.get(&key) { Some(c) => c, None => return };
         let mesh  = build_chunk_mesh(chunk, world);
@@ -267,8 +269,8 @@ impl ChunkRenderer {
     /// Record draw calls for all uploaded chunks into an active render pass.
     pub fn draw<'rp>(&'rp self, rpass: &mut RenderPass<'rp>) {
         rpass.set_pipeline(&self.pipeline);
-        rpass.set_bind_group(0, &self.cam_bg,  &[]);
-        rpass.set_bind_group(1, &self.tex_bg,  &[]);
+        rpass.set_bind_group(0, &self.cam_bg, &[]);
+        rpass.set_bind_group(1, &self.tex_bg, &[]);
         for gc in self.gpu_chunks.values() {
             rpass.set_vertex_buffer(0, gc.vbo.slice(..));
             rpass.set_index_buffer(gc.ibo.slice(..), IndexFormat::Uint32);
@@ -279,11 +281,9 @@ impl ChunkRenderer {
 
 // ---- Procedural atlas -------------------------------------------------------
 /// Build a 256x256 RGBA8 texture with solid-colored 16x16 tiles.
-/// Each tile index corresponds to the block_def.tex values in world/block.rs.
 fn make_colored_atlas() -> Vec<u8> {
-    // tile_index -> solid RGB  (tile 0 = top-left in a 16-column grid)
     let tiles: &[(usize, [u8; 3])] = &[
-        (0,   [100, 200,  80]),  // grass top (bright green)
+        (0,   [100, 200,  80]),  // grass top
         (1,   [128, 128, 128]),  // stone
         (2,   [139,  90,  43]),  // dirt
         (3,   [ 90, 150,  60]),  // grass side
@@ -298,28 +298,26 @@ fn make_colored_atlas() -> Vec<u8> {
         (32,  [220, 190,  40]),  // gold ore
         (33,  [180, 120,  90]),  // iron ore
         (34,  [ 52,  52,  52]),  // coal ore
-        (49,  [180, 215, 245]),  // glass (light blue)
-        (205, [ 28,  80, 210]),  // water (blue)
-        (237, [225,  75,  15]),  // lava  (orange)
+        (49,  [180, 215, 245]),  // glass
+        (205, [ 28,  80, 210]),  // water
+        (237, [225,  75,  15]),  // lava
     ];
 
-    // Fill with magenta (missing-tile indicator) then paint known tiles
+    // Fill with magenta (missing-tile indicator)
     let mut data = vec![0u8; 256 * 256 * 4];
     for px in data.chunks_exact_mut(4) {
         px[0] = 255; px[1] = 0; px[2] = 255; px[3] = 255;
     }
 
     for &(idx, rgb) in tiles {
-        let tx = (idx % 16) * 16;  // pixel x origin of tile
-        let ty = (idx / 16) * 16;  // pixel y origin of tile
+        let tx = (idx % 16) * 16;
+        let ty = (idx / 16) * 16;
         if tx >= 256 || ty >= 256 { continue; }
-
         for py in 0..16usize {
             for px in 0..16usize {
                 let x = tx + px;
                 let y = ty + py;
                 let i = (y * 256 + x) * 4;
-                // subtle checkerboard shading so tiles look textured
                 let shade: u8 = if (px + py) % 2 == 0 { 14 } else { 0 };
                 data[i]   = rgb[0].saturating_sub(shade);
                 data[i+1] = rgb[1].saturating_sub(shade);
